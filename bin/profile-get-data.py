@@ -33,8 +33,13 @@ import os
 from time import time
 
 from gwdetchar.io.datafind import get_data
+from gwdetchar import stacktracer
 
-verbosity = True
+
+verbosity = False
+home = os.environ['HOME']
+trace_file = os.path.join(home, 'publc_html', 'get-data-trace.html')
+stacktracer.start_trace(trace_file,interval=5,auto=True)
 
 
 def time_get(channel, start, end, nproc):
@@ -80,8 +85,12 @@ logger = logging.getLogger(__process_name__)
 logger.setLevel(logging.DEBUG)
 
 timing_hdr = '# n-chan/read, data len(hr), nproc, nbytes, read time\n'
-nprocs = range(1, multiprocessing.cpu_count()+1)
+# nprocs = range(1, multiprocessing.cpu_count()+1)
+nprocs = [multiprocessing.cpu_count()]
 rd_hrs = range(1, 28, 4)
+
+# chan_cts = [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072]
+chan_cts = [8192, 16384, 32768, 65536, 131072]
 
 
 if os.path.isfile(args.out):
@@ -105,9 +114,11 @@ nchans = len(chans)
 
 time_get(chans[0:1], args.start, args.end, 1)
 
-for nchan in [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072]:
+for nchan in chan_cts:
     if nchan <= nchans:
         for nproc in nprocs:
             for hrs in rd_hrs:
                 time_get(chans[0:nchan], args.start, args.start +  hrs*3600,
                          nproc)
+
+stacktracer.stop_trace()
