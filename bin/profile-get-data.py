@@ -28,6 +28,7 @@ __process_name__ = 'profile_get_data'
 
 import argparse
 import logging
+import multiprocessing
 import os
 from time import time
 
@@ -79,8 +80,8 @@ logger = logging.getLogger(__process_name__)
 logger.setLevel(logging.DEBUG)
 
 timing_hdr = '# n-chan/read, data len(hr), nproc, nbytes, read time\n'
-nprocs = [1, 8]
-rd_hrs = [1, 28]
+nprocs = range(1, multiprocessing.cpu_count()+1)
+rd_hrs = range(1, 28, 4)
 
 
 if os.path.isfile(args.out):
@@ -104,9 +105,9 @@ nchans = len(chans)
 
 time_get(chans[0:1], args.start, args.end, 1)
 
-for nchan in [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072]:
+for nchan in [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072]:
     if nchan <= nchans:
-        for nproc in range(1, min(nchan,nprocs[1])):
-            for hrs in range(rd_hrs[0], rd_hrs[1]):
+        for nproc in nprocs:
+            for hrs in rd_hrs:
                 time_get(chans[0:nchan], args.start, args.start +  hrs*3600,
                          nproc)
