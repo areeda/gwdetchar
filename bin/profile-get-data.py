@@ -38,8 +38,8 @@ from gwdetchar import stacktracer
 
 verbosity = False
 home = os.environ['HOME']
-trace_file = os.path.join(home, 'publc_html', 'get-data-trace.html')
-stacktracer.start_trace(trace_file,interval=5,auto=True)
+trace_file = os.path.join(home, 'public_html', 'get-data-trace.txt')
+stacktracer.trace_start(trace_file,interval=5,auto=True)
 
 
 def time_get(channel, start, end, nproc):

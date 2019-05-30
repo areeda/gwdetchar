@@ -28,14 +28,17 @@ def stacktraces():
             if line:
                 code.append("  %s" % (line.strip()))
 
-    return highlight("\n".join(code), PythonLexer(), HtmlFormatter(
+    ret_html = highlight("\n".join(code), PythonLexer(), HtmlFormatter(
             full=False,
             # style="native",
             noclasses=True,
-    ))
+            ))
+    ret_str = '\n'.join(code)
+    return ret_str
 
 
 # This part was made by nagylzs
+import datetime
 import os
 import time
 import threading
@@ -75,9 +78,16 @@ class TraceDumper(threading.Thread):
             pass
 
     def stacktraces(self):
-        fout = file(self.fpath, "wb+")
+        fout = open(self.fpath, "w")
         try:
-            fout.write(stacktraces())
+            now = datetime.datetime.now()
+            nowstr = now.strftime('%Y-%m-%d %H:%M:%S\n')
+            fout.write(nowstr)
+            traces = stacktraces()
+            fout.write(traces)
+        except:
+            (extyp, val, tb) = sys.exc_info()
+            print('stacktrace exception: {:s} {:s}'.format(extyp, val))
         finally:
             fout.close()
 
@@ -102,5 +112,5 @@ def trace_stop():
     if _tracer is None:
         raise Exception("Not tracing, cannot stop.")
     else:
-        _trace.stop()
-        _trace = None
+        _tracer.stop()
+        _tracer = None
