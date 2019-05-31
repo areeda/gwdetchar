@@ -78,12 +78,12 @@ class TraceDumper(threading.Thread):
             pass
 
     def stacktraces(self):
-        fout = open(self.fpath, "w")
         try:
             now = datetime.datetime.now()
             nowstr = now.strftime('%Y-%m-%d %H:%M:%S\n')
-            fout.write(nowstr)
             traces = stacktraces()
+            fout = open(self.fpath, "w")
+            fout.write(nowstr)
             fout.write(traces)
         except:
             (extyp, val, tb) = sys.exc_info()

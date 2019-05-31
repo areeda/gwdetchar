@@ -41,6 +41,11 @@ home = os.environ['HOME']
 trace_file = os.path.join(home, 'public_html', 'get-data-trace.txt')
 stacktracer.trace_start(trace_file,interval=5,auto=True)
 
+logger = multiprocessing.get_logger()
+mplog_file = os.path.join(home, 'public_html', 'get-data-trace.log')
+fh = logging.FileHandler(mplog_file)
+fh.setLevel(logging.DEBUG)
+logger.addHandler(fh)
 
 def time_get(channel, start, end, nproc):
     tstrt = time()
@@ -86,11 +91,11 @@ logger.setLevel(logging.DEBUG)
 
 timing_hdr = '# n-chan/read, data len(hr), nproc, nbytes, read time\n'
 # nprocs = range(1, multiprocessing.cpu_count()+1)
-nprocs = [multiprocessing.cpu_count()]
-rd_hrs = range(1, 28, 4)
+nprocs = [multiprocessing.cpu_count()-1]
+rd_hrs = [1, 8, 16, 28]
 
 # chan_cts = [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072]
-chan_cts = [8192, 16384, 32768, 65536, 131072]
+chan_cts = [16384, 32768, 65536, 131072]
 
 
 if os.path.isfile(args.out):
@@ -121,4 +126,4 @@ for nchan in chan_cts:
                 time_get(chans[0:nchan], args.start, args.start +  hrs*3600,
                          nproc)
 
-stacktracer.stop_trace()
+stacktracer.trace_stop()
