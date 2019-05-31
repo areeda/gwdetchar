@@ -90,13 +90,11 @@ logger = logging.getLogger(__process_name__)
 logger.setLevel(logging.DEBUG)
 
 timing_hdr = '# n-chan/read, data len(hr), nproc, nbytes, read time\n'
-# nprocs = range(1, multiprocessing.cpu_count()+1)
-nprocs = [multiprocessing.cpu_count()-1]
-rd_hrs = [1, 8, 16, 28]
 
-# chan_cts = [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072]
-chan_cts = [16384, 32768, 65536, 131072]
+nprocs = range(2, multiprocessing.cpu_count())
+rd_hrs = range(1, (args.end-args.start)/3600)
 
+chan_cts = [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072]
 
 if os.path.isfile(args.out):
     out = open(args.out,'a')
