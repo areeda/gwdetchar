@@ -20,7 +20,10 @@
 import os
 import re
 import sys
+import logging
 import multiprocessing
+import psutil
+from time import time
 
 import numpy
 
@@ -40,6 +43,7 @@ from pandas import set_option
 from gwpy.plot import Plot
 from gwpy.detector import ChannelList
 from gwpy.io import nds2 as io_nds2
+from gwpy.timeseries import TimeSeries, TimeSeriesDict
 
 from gwdetchar import (cli, lasso as gwlasso)
 from gwdetchar.lasso import plot as gwplot
@@ -56,7 +60,18 @@ DEFAULT_FRAMETYPE = {
     'DMT-SNSH_EFFECTIVE_RANGE_MPC.mean': 'SenseMonitor_hoft_{ifo}_M',
     'DMT-SNSW_EFFECTIVE_RANGE_MPC.mean': 'SenseMonitor_CAL_{ifo}_M',
 }
-
+last_mem = 0
+process = None
+def log_mem(label):
+    """Log memory used to better understand it"""
+    global process, last_mem, logger
+    if process is None:
+        process = psutil.Process(os.getpid())
+    m = process.memory_info().rss
+    dm = m - last_mem
+    last_mem = m
+    logger.debug('{:s}: memory {:.1f}MB change {:.1f}MB'.
+                 format(label, m*1e-6, dm*1e-6))
 
 # -- parse command line -------------------------------------------------------
 
@@ -83,10 +98,19 @@ parser.add_argument('-p', '--primary-channel',
 parser.add_argument('-P', '--primary-frametype', default=None,
                     help='frametype for --primary-channel, default: guess '
                          'by channel name')
+parser.add_argument('--primary-cache',
+                    default=None,
+                    help='path(s) of a LAL-format cache file or individual '
+                         'data file for primary channels')
+parser.add_argument('-F', '--aux-cache', default=None,
+                    help='path(s) of a LAL-format cache file or individual '
+                         'data file for aux channels')
 parser.add_argument('-O', '--remove-outliers', type=float, default=None,
                     help='Std. dev. limit for removing outliers')
 parser.add_argument('-t', '--threshold', type=float, default=0.0001,
                     help='threshold for making a plot')
+parser.add_argument('--logfile', default=None, help='save logging. '
+                                                    'Default stderr only')
 
 psig = parser.add_argument_group('Signal processing options')
 psig.add_argument('-b', '--band-pass', type=float, nargs=2, default=None,
@@ -110,7 +134,14 @@ lsig.add_argument('-l', '--line-size-aux', default=0.75, type=float,
 args = parser.parse_args()
 
 # set up logger
-logger = cli.logger(name=os.path.basename(__file__))
+logger = cli.logger(name=os.path.basename(__file__), level='DEBUG')
+if args.logfile:
+    # add a log file that doesn't have verbose output
+    fh = logging.FileHandler(args.logfile)
+    fh.setLevel(logging.DEBUG)
+    logger.addHandler(fh)
+
+log_mem("Start")
 
 # get run params
 start = int(args.gpsstart)
@@ -139,6 +170,8 @@ os.chdir(args.output_dir)
 # multiprocessing for plots
 nprocplot = (args.nproc_plot or args.nproc) if USETEX else 1
 
+# get primary channel data and optionally band pass filter
+prim_read_start = time()
 # bandpass primary
 if args.band_pass:
     try:
@@ -148,8 +181,12 @@ if args.band_pass:
 
     logger.info("-- Loading primary channel data")
     bandts = get_data(
-        primary, start-pad, end+pad, verbose='Reading primary:'.rjust(30),
-        frametype=args.primary_frametype, nproc=args.nproc)
+        primary, start-pad, end+pad, verbose=True,
+        frametype=args.primary_frametype, nproc=args.nproc,
+            source=args.primary_cache)
+    elap = time() - prim_read_start
+
+    pchan_filt_start = time()
     if flower < 0 or fupper >= float((bandts.sample_rate/2.).value):
         raise ValueError("bandpass frequency is out of range for this "
                          "channel, band (Hz): {0}, sample rate: {1}".format(
@@ -175,13 +212,21 @@ if args.band_pass:
         darmblrms.name = '%s RMS' % primary
 
     primaryts = darmblrms
+    felap = time() - pchan_filt_start
 
 else:
     # load primary channel data
     logger.info("-- Loading primary channel data")
     primaryts = get_data(primary, start, end, frametype=args.primary_frametype,
-                         verbose='Reading:'.rjust(30),
+                         verbose=True,
+                         source=args.primary_cache,
                          nproc=args.nproc).crop(start, end)
+    felap = 0.
+    elap = time() - prim_read_start
+
+logger.info('Primary channel has {:d} samples. Get {:.1f} sec,'
+            ' filter {:.1f}'.format(len(primaryts), elap, felap))
+log_mem("After prim chan read")
 
 if args.remove_outliers:
     logger.debug("-- Removing outliers above %f sigma" % args.remove_outliers)
@@ -208,7 +253,8 @@ else:
     with open(args.channel_file, 'r') as f:
         channels = [name.rstrip('\n') for name in f]
 nchan = len(channels)
-logger.debug("Identified %d channels" % nchan)
+logger.info('Identified {:d} {:s} trend channels'.format( nchan,
+                                                          args.trend_type))
 
 if args.trend_type == 'minute':
     frametype = '%s_M' % args.ifo  # for minute trends
@@ -216,28 +262,41 @@ else:
     frametype = '%s_T' % args.ifo  # for second trends
 
 # read aux channels
-auxdata = get_data(
-    channels, start, end, verbose='Reading:'.rjust(30),
-    frametype=frametype, nproc=args.nproc, pad=0).crop(start, end)
+aux_read_start = time()
+chans_per_read = 5000
+nreads = int((nchan + chans_per_read - 1) / chans_per_read)
+auxdata = TimeSeriesDict()
+chunk_no = 0
 
-# -- removes flat data to be re-introdused later
+for chan_start in range(0, nchan, chans_per_read):
+    chunk_start_time = time()
+    chunk_no += 1
+    chan_end = min(nchan, chan_start + chans_per_read)
 
-logger.info('-- Pre-processing auxiliary channel data')
+    aux_temp = get_data(channels[chan_start:chan_end],
+         start, end, verbose=True, source=args.aux_cache,
+        frametype=frametype, nproc=args.nproc, pad=0).crop(start, end)
+    relap = time() - chunk_start_time
+    aux_prune_start = time()
 
-auxdata = gwlasso.remove_flat(auxdata)
-flatable = Table(data=(list(set(channels) - set(auxdata.keys())),),
-                 names=('Channels',))
-logger.debug('Removed {0} channels with flat data'.format(len(flatable)))
-logger.debug('{0} channels remaining'.format(len(auxdata)))
+    # -- removes flat data and channels with inf or nan's
+    good = gwlasso.remove_ignorable(aux_temp)
+    if len(good) > 0:
+        auxdata += good
+    prelap = time() - aux_prune_start
+    logger.info('Got chunk {:d} of {:d}, {:d} chans read, '
+                '{:d} used. Get {:.1f}, prune {:.1f} sec'.
+                format(chunk_no, nreads, chan_end-chan_start,
+                       len(good), relap, prelap))
+    log_mem("After get chunk")
 
-# -- remove bad data
+removed_chans = list(set(channels) - set(auxdata.keys()))
+elap = time() - aux_read_start
 
-logger.info("Removing any channels with bad data...")
-nbefore = len(auxdata)
-auxdata = gwlasso.remove_bad(auxdata)
-nafter = len(auxdata)
-logger.debug('Removed {0} channels with bad data'.format(nbefore - nafter))
-logger.debug('{0} channels remaining'.format(nafter))
+logger.info('Total channels read: {:d} removed as flat or bad: {:d} remaining: '
+            '{:d} elapsed: {.1f} sec'.format(nchan, len(removed_chans),
+                                             len(auxdata), elap))
+
 data = numpy.array([scale(ts.value) for ts in auxdata.values()]).T
 
 # -- perform lasso regression -------------------------------------------------
@@ -280,10 +339,13 @@ resultsfile = '%s-LASSO_RESULTS-%s.csv' % (args.ifo, gpsstub)
 results.write(resultsfile, format='csv', overwrite=True)
 zerofile = '%s-ZERO_COEFFICIENT_CHANNELS-%s.csv' % (args.ifo, gpsstub)
 zeroed.write(zerofile, format='csv', overwrite=True)
-flatfile = '%s-FLAT_CHANNELS-%s.csv' % (args.ifo, gpsstub)
-flatable.write(flatfile, format='csv', overwrite=True)
+rejfile = '%s-REJECTED_CHANNELS-%s.csv' % (args.ifo, gpsstub)
+with open(rejfile, 'w') as f:
+    for item in removed_chans:
+        f.write('{:s}\n'.format(item))
 
 # -- generate lasso plots
+log_mem("Before plots")
 
 modelFit = model.predict(data)
 
@@ -571,6 +633,7 @@ if args.no_cluster is False:
 
 channelsfile = '%s-CHANNELS-%s.csv' % (args.ifo, gpsstub)
 numpy.savetxt(channelsfile, channels, delimiter=',', fmt='%s')
+log_mem("Before html creation")
 
 # write html
 title = '%s Lasso Correlations: %d-%d' % (args.ifo, start, end)
@@ -586,7 +649,7 @@ page.div.close()  # page-header
 # -- download button
 files = [
     ('%s analyzed channels (CSV)' % nchan, channelsfile),
-    ('%s flat channels (CSV)' % len(flatable), flatfile),
+    ('%s removed channels (CSV)' % len(removed_chans), rejfile),
     ('%s zeroed channels (CSV)' % len(zeroed), zerofile)]
 page.add(htmlio.download_btn(files, label='Channel information'))
 
@@ -718,4 +781,5 @@ for i, (ch, lassocoef, plot4, plot5, plot6, ts) in enumerate(results):
     page.div.close()  # panel
 page.div.close()  # panel-group
 htmlio.close_page(page, 'index.html')  # save and close
+log_mem('Final')
 logger.info("-- Process Completed")

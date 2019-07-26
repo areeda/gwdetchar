@@ -188,8 +188,8 @@ def get_data(channel, start, end, frametype=None, source=None,
     else:
         series_class = TimeSeries
 
-    if frametype is not None:
-        try:  # locate frame files
+    if frametype is not None and source == None:
+        try:  # locate frame files if they did not provide cache
             ifo = re.search('[A-Z]1', frametype).group(0)
             obs = ifo[0]
             source = gwdatafind.find_urls(obs, frametype, start, end)

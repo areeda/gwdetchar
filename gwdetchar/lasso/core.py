@@ -25,6 +25,7 @@ import numpy
 from scipy.interpolate import UnivariateSpline
 
 from sklearn.linear_model import Lasso
+from gwpy.timeseries import TimeSeries, TimeSeriesDict
 
 __author__ = 'Duncan Macleod <duncan.macleod@ligo.org>'
 __credits__ = 'Alex Macedo, Jeff Bidler, Oli Patane, Marissa Walker, ' \
@@ -168,4 +169,13 @@ def remove_bad(tsdict):
         series = tsdict[key].value
         if numpy.isnan(series).any() or numpy.isinf(series).any():
             outdict.pop(key)
+    return outdict
+
+def remove_ignorable(tsdict):
+    """Combine flat and bad channel removal in a memory consering way"""
+    outdict = TimeSeriesDict()
+    for key, ts in tsdict.items():
+        if ts.min().value != ts.max().value and numpy.isinf(ts).sum() == 0 and\
+            numpy.isnan(ts).sum() == 0:
+            outdict[key] = ts
     return outdict
