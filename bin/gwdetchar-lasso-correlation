@@ -105,12 +105,14 @@ parser.add_argument('--primary-cache',
 parser.add_argument('-F', '--aux-cache', default=None,
                     help='path(s) of a LAL-format cache file or individual '
                          'data file for aux channels')
+parser.add_argument('--read-chunk', type=int, default=0,
+                    help='Number of channels to read per loop, default=all')
 parser.add_argument('-O', '--remove-outliers', type=float, default=None,
                     help='Std. dev. limit for removing outliers')
 parser.add_argument('-t', '--threshold', type=float, default=0.0001,
                     help='threshold for making a plot')
-parser.add_argument('--logfile', default=None, help='save logging. '
-                                                    'Default stderr only')
+parser.add_argument('--logfile', default=None,
+                    help='save logging. Default stderr only')
 
 psig = parser.add_argument_group('Signal processing options')
 psig.add_argument('-b', '--band-pass', type=float, nargs=2, default=None,
@@ -263,10 +265,15 @@ else:
 
 # read aux channels
 aux_read_start = time()
-chans_per_read = 5000
+if args.read_chunk > 0:
+    chans_per_read = args.read_chunk
+else:
+    chans_per_read = nchan
+
 nreads = int((nchan + chans_per_read - 1) / chans_per_read)
 auxdata = TimeSeriesDict()
 chunk_no = 0
+nignored = 0
 
 for chan_start in range(0, nchan, chans_per_read):
     chunk_start_time = time()
@@ -283,12 +290,13 @@ for chan_start in range(0, nchan, chans_per_read):
     good = gwlasso.remove_ignorable(aux_temp)
     if len(good) > 0:
         auxdata += good
+    nignored += chan_end-chan_start - len(good)
     prelap = time() - aux_prune_start
     logger.info('Got chunk {:d} of {:d}, {:d} chans read, '
                 '{:d} used. Get {:.1f}, prune {:.1f} sec'.
                 format(chunk_no, nreads, chan_end-chan_start,
                        len(good), relap, prelap))
-    log_mem("After get chunk")
+    log_mem('Channels: {:d}, ignored: {:d}'.format(len(auxdata), nignored))
 
 removed_chans = list(set(channels) - set(auxdata.keys()))
 elap = time() - aux_read_start
