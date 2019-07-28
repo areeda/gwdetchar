@@ -60,6 +60,7 @@ DEFAULT_FRAMETYPE = {
     'DMT-SNSH_EFFECTIVE_RANGE_MPC.mean': 'SenseMonitor_hoft_{ifo}_M',
     'DMT-SNSW_EFFECTIVE_RANGE_MPC.mean': 'SenseMonitor_CAL_{ifo}_M',
 }
+prog_start = time()
 last_mem = 0
 process = None
 def log_mem(label):
@@ -302,13 +303,13 @@ removed_chans = list(set(channels) - set(auxdata.keys()))
 elap = time() - aux_read_start
 
 logger.info('Total channels read: {:d} removed as flat or bad: {:d} remaining: '
-            '{:d} elapsed: {.1f} sec'.format(nchan, len(removed_chans),
+            '{:d} elapsed: {:.1f} sec'.format(nchan, len(removed_chans),
                                              len(auxdata), elap))
 
 data = numpy.array([scale(ts.value) for ts in auxdata.values()]).T
 
 # -- perform lasso regression -------------------------------------------------
-
+model_start = time()
 # create model
 logger.info('-- Fitting data to target')
 target = scale(primaryts.value)
@@ -352,10 +353,13 @@ with open(rejfile, 'w') as f:
     for item in removed_chans:
         f.write('{:s}\n'.format(item))
 
+modelFit = model.predict(data)
+
+elap = time() - model_start
+logger.info('Model creation, write to files took {:.1f}'.format(elap))
 # -- generate lasso plots
 log_mem("Before plots")
-
-modelFit = model.predict(data)
+plot_start = time()
 
 re_delim = re.compile(r'[:_-]')
 form = '%%.%dd' % len(str(nchan))
@@ -642,6 +646,9 @@ if args.no_cluster is False:
 channelsfile = '%s-CHANNELS-%s.csv' % (args.ifo, gpsstub)
 numpy.savetxt(channelsfile, channels, delimiter=',', fmt='%s')
 log_mem("Before html creation")
+plot_end = time()
+elap = plot_end - plot_start
+logger.info('Plotting took {:.1f} sec'.format(elap))
 
 # write html
 title = '%s Lasso Correlations: %d-%d' % (args.ifo, start, end)
@@ -789,5 +796,8 @@ for i, (ch, lassocoef, plot4, plot5, plot6, ts) in enumerate(results):
     page.div.close()  # panel
 page.div.close()  # panel-group
 htmlio.close_page(page, 'index.html')  # save and close
+html_end = time()
+logger.info('HTML generation took {:.1f}'.format(html_end - plot_end))
 log_mem('Final')
-logger.info("-- Process Completed")
+logger.info('-- Process Completed. Run time: {:.1f} sec'.
+            format(html_end - prog_start))
